@@ -1,0 +1,25 @@
+{
+  "name": "thresh-sig",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "compile": "node-gyp rebuild",
+    "start": "node main.js"
+  },
+  "gypfile": true,
+  "keywords": [
+    "threshold",
+    "signature",
+    "cryptography",
+    "pairing",
+    "elliptic",
+    "curve"
+  ],
+  "author": "Craig O'Connor",
+  "license": "ISC",
+  "description": "PCB Wrapper",
+  "dependencies": {
+    "nan": "^2.6.2",
+    "node-gyp": "^3.6.2"
+  }
+}
