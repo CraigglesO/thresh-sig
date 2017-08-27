@@ -3,7 +3,61 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <math.h>
 #include "PBCExceptions.h"
+#include "openssl/objects.h"
+#include "openssl/sha.h"
+
+#include <fstream>
+
+int hash_to_bytes(uint8_t *input_buf, int input_len, uint8_t *output_buf, int hash_len, uint8_t hash_prefix)
+{
+	// std::ofstream logFile("logfile.txt");
+	// logFile << "input_buf " << input_buf << endl;
+	SHA256_CTX sha2;
+	int i, new_input_len = input_len + 2; // extra byte for prefix
+	uint8_t first_block = 0;
+	uint8_t new_input[new_input_len+1];
+
+	memset(new_input, 0, new_input_len+1);
+	new_input[0] = first_block; // block number (always 0 by default)
+	new_input[1] = hash_prefix; // set hash prefix
+	memcpy((uint8_t *)(new_input+2), input_buf, input_len); // copy input bytes
+
+	// prepare output buf
+	memset(output_buf, 0, hash_len);
+
+	if (hash_len <= SHA256_DIGEST_LENGTH) {
+		SHA256_Init(&sha2);
+		SHA256_Update(&sha2, new_input, new_input_len);
+		uint8_t md[SHA256_DIGEST_LENGTH+1];
+		SHA256_Final(md, &sha2);
+		memcpy(output_buf, md, hash_len);
+	}
+	else {
+		// apply variable-size hash technique to get desired size
+		// determine block count.
+		int blocks = (int) ceil(((double) hash_len) / SHA256_DIGEST_LENGTH);
+		uint8_t md[SHA256_DIGEST_LENGTH+1];
+		uint8_t md2[(blocks * SHA256_DIGEST_LENGTH)+1];
+		uint8_t *target_buf = md2;
+		for(i = 0; i < blocks; i++) {
+			/* compute digest = SHA-2( i || prefix || input_buf ) || ... || SHA-2( n-1 || prefix || input_buf ) */
+			target_buf += (i * SHA256_DIGEST_LENGTH);
+			new_input[0] = (uint8_t) i;
+			SHA256_Init(&sha2);
+			SHA256_Update(&sha2, new_input, new_input_len);
+			SHA256_Final(md, &sha2);
+			memcpy(target_buf, md, hash_len);
+			memset(md, 0, SHA256_DIGEST_LENGTH);
+		}
+		// copy back to caller
+		memcpy(output_buf, md2, hash_len);
+	}
+
+	// logFile.close();
+	return 1;
+}
 
 G2 G2::pow2(const Pairing &e, const G2 &base1, const Zr &exp1, const G2 &base2, const Zr &exp2)
 {
@@ -48,12 +102,30 @@ G2::G2(const Pairing &e, const unsigned char *data,
 	}
 
 	//Create an element from hash
-	G2::G2(const Pairing &e, const void *data,
-		unsigned short len): G(e){
-			if(elementPresent){
+	G2::G2(const Pairing &e, string data,
+		unsigned short len): G(e) {
+			// 6d3b
+			if(elementPresent) {
 				element_init_G2(g, *(pairing_t*)&e.getPairing());
-				element_from_hash(g,  *(void**)&data, len);
-			}else throw UndefinedPairingException();
+				// mpz_t n;
+				// mpz_init_set_str(n, "730750862221594424981965739670091261094297337857", 10);
+				// int hash_len = mpz_sizeinbase(n, 10) / 8;
+				int hash_len = 128;
+				uint8_t hash_buf[hash_len];
+				memset(hash_buf, 0, hash_len);
+				int result = hash_to_bytes((uint8_t *) data.c_str(), len, hash_buf, hash_len, 2);
+				if(!result)
+					throw UndefinedPairingException();
+				std::ofstream logFile("logfile.txt");
+				logFile << "input " << data << endl;
+				logFile << "hash_len " << hash_len << endl;
+				for (int i = 0; i < hash_len; i++) {
+					logFile << std::hex << std::setw(2) << std::setfill('0') << +hash_buf[i];
+				}
+				logFile.close();
+				element_from_hash(g, hash_buf, hash_len);
+				// element_from_hash(g, *(void **)&data, len);
+			} else throw UndefinedPairingException();
 		}
 
 		//Overriden getElementSize to take care of compressed elements
