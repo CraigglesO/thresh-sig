@@ -8,8 +8,6 @@
 #include "openssl/objects.h"
 #include "openssl/sha.h"
 
-#include <fstream>
-
 int hash_to_bytes(uint8_t *input_buf, int input_len, uint8_t *output_buf, int hash_len, uint8_t hash_prefix)
 {
 	// std::ofstream logFile("logfile.txt");
@@ -104,27 +102,15 @@ G2::G2(const Pairing &e, const unsigned char *data,
 	//Create an element from hash
 	G2::G2(const Pairing &e, string data,
 		unsigned short len): G(e) {
-			// 6d3b
 			if(elementPresent) {
 				element_init_G2(g, *(pairing_t*)&e.getPairing());
-				// mpz_t n;
-				// mpz_init_set_str(n, "730750862221594424981965739670091261094297337857", 10);
-				// int hash_len = mpz_sizeinbase(n, 10) / 8;
-				int hash_len = 128;
+				int hash_len = 20;
 				uint8_t hash_buf[hash_len];
 				memset(hash_buf, 0, hash_len);
 				int result = hash_to_bytes((uint8_t *) data.c_str(), len, hash_buf, hash_len, 2);
 				if(!result)
 					throw UndefinedPairingException();
-				std::ofstream logFile("logfile.txt");
-				logFile << "input " << data << endl;
-				logFile << "hash_len " << hash_len << endl;
-				for (int i = 0; i < hash_len; i++) {
-					logFile << std::hex << std::setw(2) << std::setfill('0') << +hash_buf[i];
-				}
-				logFile.close();
 				element_from_hash(g, hash_buf, hash_len);
-				// element_from_hash(g, *(void **)&data, len);
 			} else throw UndefinedPairingException();
 		}
 

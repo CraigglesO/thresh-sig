@@ -8,11 +8,11 @@
       ],
       "target_name": "addon",
       "sources": [
-        "./pbcwrapper/G2.cc",
         "main.cc",
         "./pbcwrapper/Zr.cc",
         "./pbcwrapper/G.cc",
         "./pbcwrapper/G1.cc",
+        "./pbcwrapper/G2.cc",
         "./pbcwrapper/GT.cc",
         "./pbcwrapper/Pairing.cc",
         "./pbcwrapper/PPPairing.cc"

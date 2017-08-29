@@ -102,11 +102,11 @@ INCS_Release := \
 	-I$(srcdir)/pbc-0.5.14
 
 OBJS := \
-	$(obj).target/$(TARGET)/pbcwrapper/G2.o \
 	$(obj).target/$(TARGET)/main.o \
 	$(obj).target/$(TARGET)/pbcwrapper/Zr.o \
 	$(obj).target/$(TARGET)/pbcwrapper/G.o \
 	$(obj).target/$(TARGET)/pbcwrapper/G1.o \
+	$(obj).target/$(TARGET)/pbcwrapper/G2.o \
 	$(obj).target/$(TARGET)/pbcwrapper/GT.o \
 	$(obj).target/$(TARGET)/pbcwrapper/Pairing.o \
 	$(obj).target/$(TARGET)/pbcwrapper/PPPairing.o
