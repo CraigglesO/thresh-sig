@@ -1,20 +1,21 @@
-const { Dealer, Encrypt, VerifyCipherText } = require('./build/Release/addon'); // native c++
-// const isPrime = require('./isPrime'); // js
-//
-// const number = 654188429; // thirty-fifth million first prime number (see https://primes.utm.edu/lists/small/millions/)
-// const NATIVE = 'native';
-// const JS = 'js';
-//
-// console.time(NATIVE);
-// console.log(`${NATIVE}: checking whether ${number} is prime... ${PCB()}`);
-// console.timeEnd(NATIVE);
-// console.log('');
-// console.time(JS);
-// console.log(`${JS}: checking whether ${number} is prime... ${isPrime(number)}`);
-// console.timeEnd(JS);
-let dealer = Dealer(10, 5);
+const { Dealer, Encrypt, VerifyCipherText, DecryptShare, VerifyShare, CombineShares } = require('./build/Release/addon'); // native c/c++
+
+const str = "TEST", players = 10, k = 5;
+const m = require("crypto").createHash("sha256").update(str).digest().toString("hex");
+console.log("m", m);
+
+const dealer = Dealer(players, k);
 console.log("dealer", dealer);
-let C = Encrypt("message", dealer.VK);
+const C = Encrypt("TEST", dealer.VK);
 console.log("C", C);
-let verifyCipherText = VerifyCipherText(C.U, C.V, C.W);
+const verifyCipherText = VerifyCipherText(C);
 console.log("Verify", verifyCipherText);
+const shares = dealer.SKs.map((SK) => DecryptShare(C, SK));
+console.log("decrypted shares", shares);
+const verifiedShares = shares.map((share, i) => VerifyShare(C, share, dealer.VKs[i]));
+console.log("verified Shares", verifiedShares);
+
+
+// As long as you have at least 5 decrypted shares, you can obtain the original message:
+const _m = CombineShares(C, shares.slice(0, 5));
+console.log("m === _m", m === _m);

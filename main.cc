@@ -2,8 +2,9 @@
 #include <nan.h>
 #include <sstream>
 #include <iomanip>
+#include <vector>
+#include "openssl/objects.h"
 #include <openssl/sha.h>
-#include <openssl/bn.h>
 #include "./pbcwrapper/PBC.h"
 
 using namespace std;
@@ -14,13 +15,13 @@ using namespace v8;
 const char *paramFileName = "pairing.param";
 FILE *sysParamFile = fopen(paramFileName, "r");
 Pairing e(sysParamFile);
-Zr ZERO(e, (long int) 0);
-Zr ONE(e, (long int) 1);
+Zr ZERO(e, (long int)0);
+Zr ONE(e, (long int)1);
 G1 g1(e, false);
 
 Zr polynomialEvaluation(long int x, long int size, Zr a[]) {
-  Zr y = ZERO;
-  Zr xx = ONE;
+  Zr y(e, (long int) 0);
+  Zr xx(e, (long int) 1);
   for (int coeff = 0; coeff < size; coeff++) {
     Zr x_val(e, x);
     y += a[coeff] * xx;
@@ -35,10 +36,11 @@ string sha256(const string str) {
   SHA256_Init(&sha256);
   SHA256_Update(&sha256, str.c_str(), str.size());
   SHA256_Final(hash, &sha256);
-  std::stringstream ss;
+  stringstream ss;
   for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
     ss << hex << setw(2) << setfill('0') << (int)hash[i];
   }
+  OPENSSL_cleanse(&sha256, sizeof(sha256));
   return ss.str();
 }
 
@@ -49,7 +51,13 @@ static inline unsigned int value(char c) {
   return -1;
 }
 
-string str_xor(string const & s1, string const & s2) {
+char nibble(char c) {
+  if (c >= '0' && c <= '9') { return c - '0';      }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  return c - 'A' + 10;
+}
+
+string str_xor(string const &s1, string const &s2) {
   assert(s1.length() == s2.length());
   static char const alphabet[] = "0123456789abcdef";
   string result;
@@ -62,12 +70,6 @@ string str_xor(string const & s1, string const & s2) {
   return result;
 }
 
-char nibble(char c) {
-  if (c >= '0' && c <= '9')
-   return c - '0';
-  return 10 + (c - 'a');
-}
-
 string stringToHex(string s) {
   string o;
   for (size_t i=0 ; i<s.size() ; i+=2){
@@ -77,41 +79,126 @@ string stringToHex(string s) {
   return o;
 }
 
-NAN_METHOD(CombineShares) {
+Zr lagrange(long int j, long int l) {
+  Zr num(e, (long int)1);
+  Zr den(e, (long int)1);
+  Zr jj(e, (long int)j);
+  for (int i = 0; i < l; i++) {
+    Zr ii(e, (long int)i);
+    if (!(ii == jj)) {
+      num *= (ZERO - ii - ONE);
+      den *= (jj - ii);
+    }
+  }
+  return num/den;
+}
 
+NAN_METHOD(CombineShares) {
+  if (!info[0]->IsObject() && !info[1]->IsArray()) {
+    Nan::ThrowTypeError("first argument must be an object, second must be an array!");
+    return;
+  }
+  // Prepare isolate
+  Isolate* isolate = info.GetIsolate();
+  // grab the parameters:
+  Local<Object> c(info[0]->ToObject());
+  String::Utf8Value paramV(c->Get(String::NewFromUtf8(isolate, "V")));
+  Local<Array> paramS = Local<Array>::Cast(info[1]);
+  int length = paramS->Length();
+
+  String::Utf8Value shareI(paramS->Get(0)->ToString());
+  string sS = stringToHex(*shareI);
+  G1 g(e, (const unsigned char *)sS.c_str(), sS.length());
+  G1 res = g^lagrange(0, length);
+  for (int i = 1; i < length; i++) {
+    String::Utf8Value shareI(paramS->Get(i)->ToString());
+    string sS = stringToHex(*shareI);
+    g = G1(e, (const unsigned char *)sS.c_str(), sS.length());
+    res *= g^lagrange(i, length);
+  }
+  string hashG = sha256(stringToHex(res.toHexString(true)));
+  string r = str_xor(hashG, *paramV);
+
+  info.GetReturnValue().Set(String::NewFromUtf8(isolate, r.c_str()));
 }
 
 NAN_METHOD(VerifyShare) {
+  if (!info[0]->IsObject() && !info[1]->IsString() && !info[2]->IsString()) {
+    Nan::ThrowTypeError("first argument must be an object, second must be a string!");
+    return;
+  }
+  // Prepare isolate
+  Isolate* isolate = info.GetIsolate();
+  // grab the parameters:
+  Local<Object> c(info[0]->ToObject());
+  String::Utf8Value paramU(c->Get(String::NewFromUtf8(isolate, "U")));
+  String::Utf8Value paramUi(info[1]->ToString());
+  String::Utf8Value paramVKsi(info[2]->ToString());
 
+  // U
+  string sU = stringToHex(*paramU);
+  G1 U(e, (const unsigned char *)sU.c_str(), sU.length());
+  // Ui
+  string sUi = stringToHex(*paramUi);
+  G2 Ui(e, (const unsigned char *)sUi.c_str(), sUi.length());
+  // VKsi
+  string sVKsi = stringToHex(*paramVKsi);
+  G2 VKsi(e, (const unsigned char *)sVKsi.c_str(), sVKsi.length());
+
+  if (e(g1, Ui) == e(U, VKsi))
+    info.GetReturnValue().Set(Nan::True());
+  else
+    info.GetReturnValue().Set(Nan::False());
 }
 
 NAN_METHOD(DecryptShare) {
+  // Check correctness of ciphertext
+  if (!info[0]->IsObject() && !info[1]->IsString()) {
+    Nan::ThrowTypeError("first argument must be an object, second must be a string!");
+    return;
+  }
+  // Prepare isolate
+  Isolate* isolate = info.GetIsolate();
+  // grab the parameters:
+  Local<Object> c(info[0]->ToObject());
+  String::Utf8Value paramU(c->Get(String::NewFromUtf8(isolate,"U")));
+  String::Utf8Value paramSK(info[1]->ToString());
 
+  // setup U
+  string sU = stringToHex(*paramU);
+  G1 U(e, (const unsigned char *)sU.c_str(), sU.length());
+  // setup SK
+  string sSK = stringToHex(*paramSK);
+  Zr SK(e, (const unsigned char *)sSK.c_str(), sSK.length());
+  G1 Ui = U^SK;
+
+  info.GetReturnValue().Set(String::NewFromUtf8(isolate, Ui.toHexString(false).c_str()));
 }
 
 NAN_METHOD(VerifyCipherText) {
   // Check correctness of ciphertext
-  if (!info[0]->IsString() && !info[1]->IsString() && !info[1]->IsString()) {
+  if (!info[0]->IsObject()) {
     Nan::ThrowTypeError("arguments must be strings!");
     return;
   }
+  // Prepare isolate
+  Isolate* isolate = info.GetIsolate();
   // grab the parameters:
-  String::Utf8Value param0(info[0]->ToString());
-  String::Utf8Value param1(info[1]->ToString());
-  String::Utf8Value param2(info[2]->ToString());
+  Local<Object> c(info[0]->ToObject());
+  String::Utf8Value paramU(c->Get(String::NewFromUtf8(isolate,"U")));
+  String::Utf8Value paramV(c->Get(String::NewFromUtf8(isolate,"V")));
+  String::Utf8Value paramW(c->Get(String::NewFromUtf8(isolate,"W")));
+
   // setup U
-  G1 U(e, (const unsigned char *)*param0, param0.length(), false, 10);
-  // setup V and H
-  BIGNUM *bU = BN_new();
-  BIGNUM *bV = BN_new();
-  BIGNUM *bH = BN_new();
-  BN_hex2bn(&bU, U.toHexString(false).c_str());
-  BN_hex2bn(&bV, *param1);
-  BN_add(bH, bU, bV);
-  string sH = stringToHex(BN_bn2hex(bH));
-  G2 H(e, (const unsigned char *)sH.c_str(), sH.length());
+  string sU = stringToHex(*paramU);
+  G1 U(e, (const unsigned char *)sU.c_str(), sU.length());
+  // setup V
+  string UV = U.toHexString(true);
+  string sH = stringToHex(UV.substr(0, UV.size()-2));
+  G2 H(e, sH, sH.length());
   // setup W
-  G2 W(e, (const unsigned char *)*param2, param2.length());
+  string sW = stringToHex(*paramW);
+  G2 W(e, (const unsigned char *)sW.c_str(), sW.length());
 
   if (e(g1, W) == e(U, H))
     info.GetReturnValue().Set(Nan::True());
@@ -127,36 +214,36 @@ NAN_METHOD(Encrypt) {
   // Prepare isolate
   Isolate* isolate = info.GetIsolate();
   // get the message and primary verification key
-  String::Utf8Value param0(info[0]->ToString());
-  String::Utf8Value param1(info[1]->ToString());
-  string m = sha256((string) *param0);
+  String::Utf8Value paramM(info[0]->ToString());
+  String::Utf8Value paramVK(info[1]->ToString());
+  string m = sha256((string) *paramM);
+
   // setup random value
   Zr r(e, true);
   // U
   G1 U(e);
   U = G1(g1^r);
-  // V (param1 is VK)
-  string hashG = sha256(*param1);
-  string Vxor = str_xor(m, hashG);
-  // Create big Numbers for U, V, and W for special computation
-  BIGNUM *bU = BN_new();
-  BIGNUM *bV = BN_new();
-  BIGNUM *bW = BN_new();
-  BN_hex2bn(&bU, U.toHexString(false).c_str());
-  BN_hex2bn(&bV, Vxor.c_str());
-  BN_add(bW, bU, bV);   // W = U + V
-  string sV = BN_bn2hex(bV);
-  string sW = stringToHex(BN_bn2hex(bW));
-  // Finally get the proper W groups:
-  G2 W(e, (const unsigned char *)sW.c_str(), sW.length());
+  // V
+  string sVK = stringToHex(*paramVK);
+  G1 VK(e, (const unsigned char *)sVK.c_str(), sVK.length());
+  VK ^= r;
+  string hashG = sha256(stringToHex(VK.toHexString(true)));
+  string V = str_xor(m, hashG);
+  // Use U (compressed) to create W
+  string sU = U.toHexString(true);
+  string sW = stringToHex(sU.substr(0, sU.size()-2));
+  G2 W(e, sW, sW.length());
   // W must be raised to r:
   W ^= r;
+
   // Prepare an object and send the ciphertext
   Local<Object> obj = Object::New(isolate);
+  obj->Set(String::NewFromUtf8(isolate, "G1"),
+    String::NewFromUtf8(isolate, g1.toHexString(false).c_str()));
   obj->Set(String::NewFromUtf8(isolate, "U"),
-    String::NewFromUtf8(isolate, U.toString(false).c_str()));
+    String::NewFromUtf8(isolate, U.toHexString(false).c_str()));
   obj->Set(String::NewFromUtf8(isolate, "V"),
-    String::NewFromUtf8(isolate, sV.c_str()));
+    String::NewFromUtf8(isolate, V.c_str()));
   obj->Set(String::NewFromUtf8(isolate, "W"),
     String::NewFromUtf8(isolate, W.toHexString(false).c_str()));
   info.GetReturnValue().Set(obj);
@@ -173,14 +260,10 @@ NAN_METHOD(Dealer) {
   int players = (int) info[0]->NumberValue();
   int k = (int) info[1]->NumberValue();
 
-  FILE * pFile;
-  pFile = fopen ("ZrLog.txt" , "w");
   // prepare all polynomial secrets. Master ksecret is secrets[0]
   Zr secrets[k];
   for (int i = 0; i < k; i++) {
-    Zr r(e,true);
-    r.dump(pFile, "random number set", 10);
-    secrets[i] = r;
+    secrets[i] = Zr(e, true);
   }
   // get all shared secrets of master key (secrets[0])
   Zr SKs[players];
@@ -188,26 +271,19 @@ NAN_METHOD(Dealer) {
   for (long int i = 0; i < players; i++) {
     SKs[i] = polynomialEvaluation(i + 1, k, secrets);
     lSKs->Set(i, String::NewFromUtf8(isolate, SKs[i].toHexString().c_str()));
-    SKs[i].dump(pFile, "SKs set", 10);
   }
   // Create verifications keys:
   G1 VK(e);
-  // G1 VK(e, (const unsigned char *)"[4264083391895955901265257040028479149400169025615345260303986214726423231173928285256791041998919055277112394516001733341992693480052725918957267301183325, 2116426609166886503385333553365957364401816544109920990955286798122869276384003469957105697651246200288946800075692216092350705727159751274607530017817646]", 312, false, 10);
-  // Zr Secret(e,(const unsigned char *)"145811360758041481562956711359142699218402722188", 48, 10);
   VK = g1^secrets[0];
   G1 VKs[players];
   Local<Array> lVKs = Array::New(isolate);
   for (int i = 0; i < players; i++) {
     VKs[i] = g1^SKs[i];
     lVKs->Set(i, String::NewFromUtf8(isolate, VKs[i].toHexString(false).c_str()));
-    VKs[i].dump(pFile, "VKs", 10);
   }
-  VK.dump(pFile, "VK", 10);
 
   // Let's create the v8 object and pass it over to node
   Local<Object> obj = Object::New(isolate);
-  obj->Set(String::NewFromUtf8(isolate, "G1"),
-    String::NewFromUtf8(isolate, g1.toHexString(false).c_str()));
   obj->Set(String::NewFromUtf8(isolate, "secret"),
     String::NewFromUtf8(isolate, secrets[0].toHexString().c_str()));
   obj->Set(String::NewFromUtf8(isolate, "SKs"),
@@ -224,6 +300,9 @@ NAN_MODULE_INIT(Initialize) {
   NAN_EXPORT(target, Dealer);
   NAN_EXPORT(target, Encrypt);
   NAN_EXPORT(target, VerifyCipherText);
+  NAN_EXPORT(target, DecryptShare);
+  NAN_EXPORT(target, VerifyShare);
+  NAN_EXPORT(target, CombineShares);
 }
 
 NODE_MODULE(addon, Initialize);

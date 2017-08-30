@@ -24,7 +24,7 @@ static G2 pow3(const Pairing &e, const G2 &base1, const Zr &exp1, const G2 &base
 	 unsigned short base = 0);
 
   //Create an element from hash
-  G2(const Pairing &e, const void *data,
+  G2(const Pairing &e, string data,
 	 unsigned short len);
 
   //Intialize with another element but with different value
