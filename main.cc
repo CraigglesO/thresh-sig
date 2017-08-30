@@ -15,10 +15,9 @@ using namespace v8;
 const char *paramFileName = "pairing.param";
 FILE *sysParamFile = fopen(paramFileName, "r");
 Pairing e(sysParamFile);
-G1 g1(e, false);
 Zr ZERO(e, (long int)0);
 Zr ONE(e, (long int)1);
-// G1 g1(e, (unsigned char *)"[4264083391895955901265257040028479149400169025615345260303986214726423231173928285256791041998919055277112394516001733341992693480052725918957267301183325, 2116426609166886503385333553365957364401816544109920990955286798122869276384003469957105697651246200288946800075692216092350705727159751274607530017817646]", 312, false, 10);
+G1 g1(e, false);
 
 Zr polynomialEvaluation(long int x, long int size, Zr a[]) {
   Zr y(e, (long int) 0);
@@ -80,17 +79,6 @@ string stringToHex(string s) {
   return o;
 }
 
-NAN_METHOD(Convert) {
-  // Prepare isolate
-  Isolate* isolate = info.GetIsolate();
-  // setup value
-  String::Utf8Value input(info[0]->ToString());
-  Zr c(e, (const unsigned char *)*input, input.length(), 10);
-  // G1 c(e, (const unsigned char *)*input, input.length(), false, 10);
-
-  info.GetReturnValue().Set(String::NewFromUtf8(isolate, c.toHexString().c_str()));
-}
-
 Zr lagrange(long int j, long int l) {
   Zr num(e, (long int)1);
   Zr den(e, (long int)1);
@@ -110,7 +98,6 @@ NAN_METHOD(CombineShares) {
     Nan::ThrowTypeError("first argument must be an object, second must be an array!");
     return;
   }
-  ofstream logFile("log.txt");
   // Prepare isolate
   Isolate* isolate = info.GetIsolate();
   // grab the parameters:
@@ -118,36 +105,21 @@ NAN_METHOD(CombineShares) {
   String::Utf8Value paramV(c->Get(String::NewFromUtf8(isolate, "V")));
   Local<Array> paramS = Local<Array>::Cast(info[1]);
   int length = paramS->Length();
-  bool first = true;
 
-  G1 res;
-  for (int i = 0; i < length; i++) {
-    if (!paramS->Get(i)->IsNull()) {
-      String::Utf8Value shareI(paramS->Get(i)->ToString());
-      string sS = stringToHex(*shareI);
-      G1 g(e, (const unsigned char *)sS.c_str(), sS.length());
-      if (first) {  res = g^lagrange(i, length); }
-      else       { res *= g^lagrange(i, length); }
-      first = false;
-    }
+  String::Utf8Value shareI(paramS->Get(0)->ToString());
+  string sS = stringToHex(*shareI);
+  G1 g(e, (const unsigned char *)sS.c_str(), sS.length());
+  G1 res = g^lagrange(0, length);
+  for (int i = 1; i < length; i++) {
+    String::Utf8Value shareI(paramS->Get(i)->ToString());
+    string sS = stringToHex(*shareI);
+    g = G1(e, (const unsigned char *)sS.c_str(), sS.length());
+    res *= g^lagrange(i, length);
   }
-  // int i = 0;
-  // while (shares[i] == NULL && i < length) { i++; }
-  // G1 res = (*shares[i])^lagrange(i, length);
-  // logFile << "HERE2.5" << endl;
-  // for (; i < length; i++) {
-  //   if (shares[i] != NULL) { res *= *shares[i]^lagrange(i, length); }
-  // }
-  // logFile << "HERE3" << endl;
   string hashG = sha256(stringToHex(res.toHexString(true)));
   string r = str_xor(hashG, *paramV);
 
   info.GetReturnValue().Set(String::NewFromUtf8(isolate, r.c_str()));
-  logFile.close();
-  // String::Utf8Value shareSTR(paramS->Get(1)->ToString());
-  // G1 ggg = *shares[0];
-  // string str = ggg.toString(false);
-  // info.GetReturnValue().Set(String::NewFromUtf8(isolate, str.c_str()));
 }
 
 NAN_METHOD(VerifyShare) {
@@ -248,7 +220,6 @@ NAN_METHOD(Encrypt) {
 
   // setup random value
   Zr r(e, true);
-  // Zr r(e, (unsigned char *)"668446078456621862688939921260498432629873090649", 48, 10);
   // U
   G1 U(e);
   U = G1(g1^r);
@@ -332,7 +303,6 @@ NAN_MODULE_INIT(Initialize) {
   NAN_EXPORT(target, DecryptShare);
   NAN_EXPORT(target, VerifyShare);
   NAN_EXPORT(target, CombineShares);
-  NAN_EXPORT(target, Convert);
 }
 
 NODE_MODULE(addon, Initialize);
